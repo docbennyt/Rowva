@@ -1,0 +1,7 @@
+[2026-02-01T21:06:39.169233] Failed to process input:
+Traceback (most recent call last):
+  File "c:\Users\BenedictusMakuyana\3D Objects\Rowva\Mini\main.py", line 105, in process_day
+    parsed = validated['final_record']
+             ~~~~~~~~~^^^^^^^^^^^^^^^^
+KeyError: 'final_record'
+
