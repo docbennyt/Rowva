@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from parser import parse_whatsapp_day
 from logic import validate_and_summarize
 from db import save_daily_record, get_weekly_data, init_db, get_connection
+from reconciler import reconcile
 from exporter import export_to_excel
 
 # Initialize database on startup
@@ -100,12 +101,14 @@ class RowvaMiniApp:
             
         try:
             parsed = parse_whatsapp_day(raw_text)
-            validated = validate_and_summarize(parsed)
+            # Reconcile parsed record to produce authoritative corrected record
+            corrected = reconcile(parsed)
+            validated = validate_and_summarize(corrected)
             summary_text = validated['structured_text']
 
-            # Save to DB (use original parsed dict, not validated)
-            save_daily_record(parsed)
-            self.current_date = parsed['date']
+            # Save reconciled/corrected record to DB
+            save_daily_record(corrected)
+            self.current_date = corrected.get('date', parsed.get('date'))
 
             # Show output (strict formatted summary)
             self.output.config(state='normal')
@@ -120,7 +123,7 @@ class RowvaMiniApp:
                 messagebox.showwarning("Variance detected",
                                        f"Variance: {var:+.2f}. Expected cash: {expected:.2f}. Please review the entry.")
             else:
-                messagebox.showinfo("Success", f"Saved {parsed['date']}")
+                messagebox.showinfo("Success", f"Saved {self.current_date}")
 
         except Exception as e:
             # Write full traceback to error log for diagnosis and put traceback on clipboard

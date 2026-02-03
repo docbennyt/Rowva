@@ -76,6 +76,33 @@ def init_db():
             FOREIGN KEY(date) REFERENCES daily_records(date)
         )
     ''')
+        # Corrections table: supervised learning / audit trail
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS corrections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,                 -- record date (YYYY-MM-DD)
+            raw_segment TEXT NOT NULL,          -- snippet of original text
+            parsed_label TEXT,                  -- what parser classified it as
+            correct_label TEXT NOT NULL,        -- user/Gemini correction
+            source TEXT NOT NULL,               -- 'user' | 'gemini'
+            confidence REAL DEFAULT 0.0,        -- optional confidence score
+            applied INTEGER DEFAULT 0,          -- 0 = not applied to rules, 1 = applied
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    # Learned rules proposed and (optionally) approved
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS learned_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_key TEXT NOT NULL UNIQUE,      -- short rule id
+            rule_json TEXT NOT NULL,            -- canonical JSON rule
+            description TEXT,
+            source TEXT,                        -- e.g., 'gemini','user'
+            approved INTEGER DEFAULT 0,         -- 0 = suggested, 1 = approved
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
 
     conn.commit()
     conn.close()
@@ -168,6 +195,62 @@ def get_weekly_data(week_start: str):
     conn.close()
     return rows
 
+def log_correction(date: str, raw_segment: str, parsed_label: str, correct_label: str,
+                   source: str = "user", confidence: float = 0.0):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO corrections (date, raw_segment, parsed_label, correct_label, source, confidence)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (date, raw_segment, parsed_label, correct_label, source, confidence))
+    conn.commit()
+    conn.close()
+
+def get_unapplied_corrections(limit: int = 100):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT id, date, raw_segment, parsed_label, correct_label, source, confidence
+        FROM corrections
+        WHERE applied = 0
+        ORDER BY created_at ASC
+        LIMIT ?
+    ''', (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def mark_corrections_applied(ids):
+    if not ids:
+        return
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(f'''
+        UPDATE corrections SET applied = 1 WHERE id IN ({','.join('?' for _ in ids)})
+    ''', ids)
+    conn.commit()
+    conn.close()
+
+def add_learned_rule(rule_key: str, rule_json: str, description: str = "", source: str = "gemini", approved: int = 0):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT OR REPLACE INTO learned_rules (rule_key, rule_json, description, source, approved)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (rule_key, rule_json, description, source, approved))
+    conn.commit()
+    conn.close()
+
+def get_learned_rules(approved_only: bool = True):
+    conn = get_connection()
+    c = conn.cursor()
+    if approved_only:
+        c.execute('SELECT rule_key, rule_json, description FROM learned_rules WHERE approved = 1')
+    else:
+        c.execute('SELECT id, rule_key, rule_json, description, approved FROM learned_rules ORDER BY created_at DESC')
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 def log_rl_feedback(date: str, issue_type: str, desc: str, correction: str = ""):
     conn = get_connection()
